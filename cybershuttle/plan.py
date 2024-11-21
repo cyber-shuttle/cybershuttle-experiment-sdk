@@ -31,7 +31,7 @@ class Plan:
         # raise NotImplementedError()
         self.started = True
 
-    def wait_for_completion(self) -> None:
+    def wait_for_completion(self, check_every_n_mins: int = 3) -> None:
         if not self.started:
             raise Exception("Plan has not started yet.")
         print("Waiting for completion")
@@ -76,7 +76,7 @@ class Runtime(abc.ABC):
     @staticmethod
     def default():
         # return Slurm.default()
-        return Local.default()
+        return Remote.default()
 
     @staticmethod
     def Remote(**kwargs):
