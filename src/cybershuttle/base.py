@@ -4,7 +4,9 @@ import abc
 from itertools import product
 from typing import Any
 
-from .plan import Plan, Runtime, Task
+from .plan import Plan
+from .runtime import Runtime
+from .task import Task
 
 
 class GUIApp:

@@ -115,11 +115,11 @@ analysis_runtime = cs.runtime.Remote(
 
 
 # [collecting results]
-location = plan.collect_results(runtime=analysis_runtime)
+paths = plan.collect_results(runtime=analysis_runtime)
 
 # [analysis on VMD GUI App] ---- skipping for now
 vmd = md.VMD.initialize(name="yasith_vmd_analysis")
-vmd.open(runtime=analysis_runtime, location=location)
+vmd.open(runtime=analysis_runtime, location=".")
 
 # -------------------------------------------------------------------------------------------------
 # CLEANUP
