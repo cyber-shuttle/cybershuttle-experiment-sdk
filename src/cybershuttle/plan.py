@@ -12,7 +12,6 @@ import random
 class Plan(pydantic.BaseModel):
 
     tasks: list[Task] = []
-    started: bool = pydantic.Field(default=False, exclude=True)
 
     @pydantic.field_validator("tasks", mode="before")
     def default_tasks(cls, v):
@@ -24,11 +23,11 @@ class Plan(pydantic.BaseModel):
         for task in self.tasks:
             print(task)
 
-    def stage_prepare(self) -> None:
+    def __stage_prepare__(self) -> None:
         print("Preparing execution plan...")
         self.describe()
 
-    def stage_confirm(self, silent: bool) -> None:
+    def __stage_confirm__(self, silent: bool) -> None:
         print("Confirming execution plan...")
         if not silent:
             while True:
@@ -40,12 +39,12 @@ class Plan(pydantic.BaseModel):
                 else:
                     continue
 
-    def stage_begin(self) -> None:
+    def __stage_begin__(self) -> None:
         print("Starting tasks...")
         for task in self.tasks:
             task.begin()
 
-    def stage_status(self) -> list[str]:
+    def __stage_status__(self) -> list[str]:
         print("Checking task(s) status...")
         statuses = []
         for task in self.tasks:
@@ -53,17 +52,23 @@ class Plan(pydantic.BaseModel):
         print("task(s) status:", statuses)
         return statuses
 
-    def execute(self, silent: bool = False) -> None:
+    def __stage_stop__(self) -> None:
+        print("Stopping task(s)...")
+        for task in self.tasks:
+            task.stop()
+        print("Task(s) stopped.")
+
+    def run(self, silent: bool = False) -> None:
         try:
-            self.stage_prepare()
-            self.stage_confirm(silent)
-            self.stage_begin()
+            self.__stage_prepare__()
+            self.__stage_confirm__(silent)
+            self.__stage_begin__()
         except Exception as e:
             print(*e.args, sep="\n")
 
-    def wait_for_completion(self, check_every_n_mins: float = 0.1) -> None:
+    def join(self, check_every_n_mins: float = 0.1) -> None:
         while True:
-            statuses = self.stage_status()
+            statuses = self.__stage_status__()
             if all(status == "COMPLETED" for status in statuses):
                 print("Task(s) complete.")
                 break
@@ -71,31 +76,23 @@ class Plan(pydantic.BaseModel):
             print(f"Task(s) running. rechecking in {sleep_time:.1f} seconds...")
             time.sleep(sleep_time)
 
-    def terminate(self) -> None:
-        if not self.started:
-            raise Exception("Plan has not started yet.")
-        print("Terminating plan")
-        # TODO terminate the jobs
-        # raise NotImplementedError()
-        self.started = False
+    def stop(self) -> None:
+        self.__stage_stop__()
 
     def save(self, filename: str) -> None:
-        # TODO save the plan to a file
         with open(filename, "w") as f:
             json.dump(self.model_dump(), f)
+
+    @staticmethod
+    def load(filename: str) -> Plan:
+        with open(filename, "r") as f:
+            model = json.load(f)
+            return Plan(**model)
 
     def collect_results(self, runtime: Runtime) -> str:
         # TODO collect the results of the plan
         # return the file location pointer
         raise NotImplementedError()
-
-
-def load(filename: str) -> Plan:
-    # TODO load the plan from a file
-
-    with open(filename, "r") as f:
-        model = json.load(f)
-        return Plan(**model)
 
 
 class Runtime(abc.ABC, pydantic.BaseModel):
@@ -135,7 +132,7 @@ class Runtime(abc.ABC, pydantic.BaseModel):
 
     @staticmethod
     def Local(**kwargs):
-        return Local(**kwargs)
+        return Mock(**kwargs)
 
 
 class Remote(Runtime):
@@ -167,11 +164,11 @@ class Remote(Runtime):
 
     @staticmethod
     def default():
-        return Local()
+        return Mock()
         # return Remote(cluster="expanse", partition="shared", profile="grprsp-1")
 
 
-class Local(Runtime):
+class Mock(Runtime):
 
     def __init__(self) -> None:
         super(Runtime, self).__init__(id="local")
@@ -200,7 +197,7 @@ class Local(Runtime):
 
     @staticmethod
     def default():
-        return Local()
+        return Mock()
 
 
 class Task(pydantic.BaseModel):
@@ -215,8 +212,8 @@ class Task(pydantic.BaseModel):
         if isinstance(v, dict) and "id" in v:
             id = v.pop("id")
             args = v.pop("args", {})
-            if id == "local":
-                return Local(**args)
+            if id == "mock":
+                return Mock(**args)
             elif id == "remote":
                 return Remote(**args)
             else:

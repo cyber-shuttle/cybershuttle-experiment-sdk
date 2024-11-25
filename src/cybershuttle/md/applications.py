@@ -23,11 +23,18 @@ class NAMD(ExperimentApp):
     def initialize(
         cls,
         name: str,
-        pdb: str,
-        psf: str,
+        config_file: str,
+        pdb_file: str,
+        psf_file: str,
+        other_files: list[str] = [],
     ) -> Experiment:
         app = cls(name)
-        return Experiment(app).with_inputs(pdb=pdb, psf=psf)
+        return Experiment(app).with_inputs(
+            config_file=config_file,
+            pdb_file=pdb_file,
+            psf_file=psf_file,
+            other_files=other_files,
+        )
 
 
 class VMD(GUIApp):
