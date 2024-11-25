@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import abc
 import json
+import time
 import pydantic
 from typing import Any
+import uuid
+import random
 
 
 class Plan(pydantic.BaseModel):
-    
+
     tasks: list[Task] = []
     started: bool = pydantic.Field(default=False, exclude=True)
 
@@ -21,10 +24,11 @@ class Plan(pydantic.BaseModel):
         for task in self.tasks:
             print(task)
 
-    def stage_preparation(self) -> None:
+    def stage_prepare(self) -> None:
         print("Preparing execution plan...")
+        self.describe()
 
-    def stage_confirmation(self, silent: bool) -> None:
+    def stage_confirm(self, silent: bool) -> None:
         print("Confirming execution plan...")
         if not silent:
             while True:
@@ -36,33 +40,36 @@ class Plan(pydantic.BaseModel):
                 else:
                     continue
 
-    def stage_data_movement(self) -> None:
-        print("Staging data for compute resource...")
+    def stage_begin(self) -> None:
+        print("Starting tasks...")
         for task in self.tasks:
-            pass
+            task.begin()
 
-    def stage_scheduling(self) -> None:
-        print("Scheduling tasks on compute resource...")
+    def stage_status(self) -> list[str]:
+        print("Checking task(s) status...")
+        statuses = []
         for task in self.tasks:
-            pass
+            statuses.append(task.status())
+        print("task(s) status:", statuses)
+        return statuses
 
     def execute(self, silent: bool = False) -> None:
         try:
-            self.stage_preparation()
-            self.stage_confirmation(silent)
-            self.stage_data_movement()
-            self.stage_scheduling()
-            print("Execution has started.")
-            self.started = True
+            self.stage_prepare()
+            self.stage_confirm(silent)
+            self.stage_begin()
         except Exception as e:
             print(*e.args, sep="\n")
 
-    def wait_for_completion(self, check_every_n_mins: int = 3) -> None:
-        if not self.started:
-            raise Exception("Plan has not started yet.")
-        print("Waiting for completion")
-        # TODO wait for the jobs to finish
-        # raise NotImplementedError()
+    def wait_for_completion(self, check_every_n_mins: float = 0.1) -> None:
+        while True:
+            statuses = self.stage_status()
+            if all(status == "COMPLETED" for status in statuses):
+                print("Task(s) complete.")
+                break
+            sleep_time = check_every_n_mins * 60
+            print(f"Task(s) running. rechecking in {sleep_time:.1f} seconds...")
+            time.sleep(sleep_time)
 
     def terminate(self) -> None:
         if not self.started:
@@ -94,10 +101,25 @@ def load(filename: str) -> Plan:
 class Runtime(abc.ABC, pydantic.BaseModel):
 
     id: str
-    args: dict[str, Any] = {}
+    args: dict[str, Any] = pydantic.Field(default={})
 
     @abc.abstractmethod
-    def execute(self, plan: Plan): ...
+    def upload(self, file: str) -> str: ...
+
+    @abc.abstractmethod
+    def execute(self, app_id: str, inputs: dict[str, Any]) -> str: ...
+
+    @abc.abstractmethod
+    def status(self, ref: str) -> str: ...
+
+    @abc.abstractmethod
+    def signal(self, ref: str, signal: str) -> None: ...
+
+    @abc.abstractmethod
+    def ls(self, ref: str) -> list[str]: ...
+
+    @abc.abstractmethod
+    def download(self, ref: str, file: str) -> str: ...
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}(args={self.args})"
@@ -121,21 +143,60 @@ class Remote(Runtime):
     def __init__(self, **kwargs) -> None:
         super(Runtime, self).__init__(id="remote", args=kwargs)
 
-    def execute(self, plan: Plan):
-        print("Executing Slurm job with args: ", self.args)
+    def upload(self, file: str) -> str:
+        return ""
+
+    def execute(self, app_id: str, inputs: dict[str, Any]) -> str:
+        print("Copying data to compute resource: ", inputs)
+        print(f"Executing app_id={app_id} on Remote:", self.args)
+        execution_id = "12345"
+        print(f"Assigned exec_id={execution_id} to task")
+        return execution_id
+
+    def status(self, ref: str) -> str:
+        return "COMPLETED"
+
+    def signal(self, ref: str, signal: str) -> None:
+        pass
+
+    def ls(self, ref: str) -> list[str]:
+        return []
+
+    def download(self, ref: str, file: str) -> str:
+        return ""
 
     @staticmethod
     def default():
-        return Remote(cluster="expanse", partition="shared", profile="grprsp-1")
+        return Local()
+        # return Remote(cluster="expanse", partition="shared", profile="grprsp-1")
 
 
 class Local(Runtime):
 
-    def __init__(self, **kwargs) -> None:
-        super(Runtime, self).__init__(id="local", args=kwargs)
+    def __init__(self) -> None:
+        super(Runtime, self).__init__(id="local")
 
-    def execute(self, plan: Plan):
-        print("Executing Local job with args: ", self.args)
+    def upload(self, file: str) -> str:
+        return ""
+
+    def execute(self, app_id: str, inputs: dict[str, Any]) -> str:
+        print("Copying data to compute resource: ", inputs)
+        print(f"Executing app_id={app_id} on Local:", self.args)
+        execution_id = str(uuid.uuid4())
+        print(f"Assigned exec_id={execution_id} to task")
+        return execution_id
+
+    def status(self, ref: str) -> str:
+        return "COMPLETED"
+
+    def signal(self, ref: str, signal: str) -> None:
+        pass
+
+    def ls(self, ref: str) -> list[str]:
+        return []
+
+    def download(self, ref: str, file: str) -> str:
+        return ""
 
     @staticmethod
     def default():
@@ -147,6 +208,7 @@ class Task(pydantic.BaseModel):
     app_id: str
     inputs: dict[str, Any]
     runtime: Runtime
+    ref: str | None = pydantic.Field(default=None, exclude=True)
 
     @pydantic.field_validator("runtime", mode="before")
     def set_runtime(cls, v):
@@ -164,17 +226,21 @@ class Task(pydantic.BaseModel):
     def __str__(self) -> str:
         return f"Task(app_id={self.app_id}, inputs={self.inputs}, runtime={self.runtime})"
 
+    def begin(self) -> None:
+        app_id = self.app_id
+        inputs = self.inputs
+        runtime = self.runtime
+        ref = runtime.execute(app_id, inputs)
+        self.ref = ref
+
     def status(self) -> str:
-        # TODO get the status of the job
-        return "COMPLETED"
-        raise NotImplementedError()
+        assert self.ref is not None
+        return self.runtime.status(self.ref)
 
     def files(self) -> list[str]:
-        # TODO get the files of the job
-        return []
-        raise NotImplementedError()
+        assert self.ref is not None
+        return self.runtime.ls(self.ref)
 
     def stop(self) -> None:
-        # TODO stop the job
-        return None
-        raise NotImplementedError()
+        assert self.ref is not None
+        return self.runtime.signal(self.ref, "SIGTERM")
