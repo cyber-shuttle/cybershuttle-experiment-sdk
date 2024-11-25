@@ -3,10 +3,9 @@ from __future__ import annotations
 import abc
 import json
 import time
-import pydantic
 from typing import Any
-import uuid
-import random
+
+import pydantic
 
 
 class Plan(pydantic.BaseModel):
@@ -79,12 +78,12 @@ class Plan(pydantic.BaseModel):
     def stop(self) -> None:
         self.__stage_stop__()
 
-    def save(self, filename: str) -> None:
+    def save_json(self, filename: str) -> None:
         with open(filename, "w") as f:
             json.dump(self.model_dump(), f)
 
     @staticmethod
-    def load(filename: str) -> Plan:
+    def load_json(filename: str) -> Plan:
         with open(filename, "r") as f:
             model = json.load(f)
             return Plan(**model)
@@ -170,21 +169,30 @@ class Remote(Runtime):
 
 class Mock(Runtime):
 
+    _state: int = 0
+
     def __init__(self) -> None:
-        super(Runtime, self).__init__(id="local")
+        super(Runtime, self).__init__(id="mock")
 
     def upload(self, file: str) -> str:
         return ""
 
     def execute(self, app_id: str, inputs: dict[str, Any]) -> str:
+        import uuid
+
         print("Copying data to compute resource: ", inputs)
-        print(f"Executing app_id={app_id} on Local:", self.args)
+        print(f"Executing app_id={app_id} on Mock:", self.args)
         execution_id = str(uuid.uuid4())
         print(f"Assigned exec_id={execution_id} to task")
         return execution_id
 
     def status(self, ref: str) -> str:
-        return "COMPLETED"
+        import random
+
+        self._state += random.randint(0, 5)
+        if self._state > 10:
+            return "COMPLETED"
+        return "RUNNING"
 
     def signal(self, ref: str, signal: str) -> None:
         pass

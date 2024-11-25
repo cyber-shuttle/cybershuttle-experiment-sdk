@@ -52,8 +52,8 @@ plan = exp.plan()  # this will create a plan for the experiment
 plan.describe()  # this will describe the plan
 
 # [saving/loading plans]
-plan.save("plan1.json")  # this will save the plan to a file
-plan = cs.plan.Plan.load("plan1.json")  # this will load the plan from a file
+plan.save_json("plan.json")  # this will save the plan to a file
+plan = cs.plan.Plan.load_json("plan.json")  # this will load the plan from a file
 plan.describe()  # this will describe the plan
 
 # [executing plans]
