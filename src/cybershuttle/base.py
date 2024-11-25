@@ -54,7 +54,9 @@ class Experiment(abc.ABC):
         This will create a copy of the application with the given inputs.
 
         """
-        self.tasks.append(Task({}, runtime or self.resource))
+        self.tasks.append(
+            Task(app_id=self.application.app_id, inputs={**self.inputs}, runtime=runtime or self.resource)
+        )
 
     def add_sweep(self, runtime: Runtime | None = None, **space: list[Any]) -> None:
         """
@@ -63,12 +65,23 @@ class Experiment(abc.ABC):
         """
         for values in product(*space.values()):
             task_specific_params = dict(zip(space.keys(), values))
-            self.tasks.append(Task(task_specific_params, runtime or self.resource))
+            self.tasks.append(
+                Task(
+                    app_id=self.application.app_id,
+                    inputs={**self.inputs, **task_specific_params},
+                    runtime=runtime or self.resource,
+                )
+            )
 
     def plan(self, **kwargs) -> Plan:
         if len(self.tasks) == 0:
             self.add_replica(self.resource)
-        return Plan(self.inputs, self.tasks)
+        return Plan(
+            tasks=[
+                Task(app_id=self.application.app_id, inputs={**self.inputs, **t.inputs}, runtime=t.runtime)
+                for t in self.tasks
+            ]
+        )
 
 
 class ExperimentApp:
