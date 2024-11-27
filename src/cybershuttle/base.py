@@ -50,14 +50,19 @@ class Experiment(abc.ABC):
         self.resource = resource
         return self
 
-    def add_replica(self, runtime: Runtime | None = None) -> None:
+    def add_replica(self, *allowed_runtimes: Runtime) -> None:
         """
         Add a replica to the experiment.
         This will create a copy of the application with the given inputs.
 
         """
+        # TODO random scheduling for now
+        import random
         self.tasks.append(
-            Task(app_id=self.application.app_id, inputs={**self.inputs}, runtime=runtime or self.resource)
+            Task(
+              app_id=self.application.app_id, inputs={**self.inputs},
+              runtime=random.choice(allowed_runtimes) if len(allowed_runtimes) > 0 else self.resource,
+            )
         )
 
     def add_sweep(self, runtime: Runtime | None = None, **space: list[Any]) -> None:

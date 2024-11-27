@@ -1,6 +1,7 @@
 import configparser
 import logging
 import os
+from typing import Literal
 
 import jwt
 from airavata.model.security.ttypes import AuthzToken
@@ -16,60 +17,83 @@ logger.setLevel(logging.INFO)
 
 class AiravataOperator:
 
-    def __init__(self, configuration_file_location):
+    def __init__(self, configuration_file_location: str, access_token: str):
         self.configuration_file_location = configuration_file_location
-        self.api_server_client = APIServerClient(configuration_file_location)
-        self.gateway_conf = GatewaySettings(configuration_file_location)
-        self.experiment_conf = ExperimentSettings(configuration_file_location)
+        self.access_token = access_token
 
-    def get_airavata_token(self, access_token, gateway_id):
+        self.api_server_client = APIServerClient(self.configuration_file_location)
+        self.gateway_conf = GatewaySettings(self.configuration_file_location)
+        self.experiment_conf = ExperimentSettings(self.configuration_file_location)
+
+        self.airavata_token = self.__airavata_token__(self.access_token, self.gateway_conf.GATEWAY_ID)
+        self.api_util = APIServerClientUtil(
+            configuration_file_location,
+            username=self.user_id,
+            password="",
+            gateway_id=self.gateway_conf.GATEWAY_ID,
+            access_token=self.access_token,
+        )
+
+    def __airavata_token__(self, access_token, gateway_id):
         decode = jwt.decode(access_token, options={"verify_signature": False})
         self.user_id = decode["preferred_username"]
         claimsMap = {"userName": self.user_id, "gatewayID": gateway_id}
 
-        return AuthzToken(accessToken=access_token, claimsMap=claimsMap)
+        return AuthzToken(accessToken=self.access_token, claimsMap=claimsMap)
 
-    def get_experiment(self, access_token, experiment_id):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
-        return self.api_server_client.get_experiment(airavata_token, experiment_id)
+    def get_experiment(self, experiment_id):
+        return self.api_server_client.get_experiment(self.airavata_token, experiment_id)
 
-    def get_application_list(self, access_token):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
-        modules = self.api_server_client.get_all_app_modules(airavata_token, self.gateway_conf.GATEWAY_ID)
+    def get_application_list(self):
+        modules = self.api_server_client.get_all_app_modules(self.airavata_token, self.gateway_conf.GATEWAY_ID)
         return modules
 
-    def get_compatible_deployments(self, access_token, application_module_id):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
-
+    def get_compatible_deployments(self, application_module_id):
         api_util = APIServerClientUtil(
-            self.configuration_file_location, self.user_id, "", self.gateway_conf.GATEWAY_ID, access_token
+            self.configuration_file_location, self.user_id, "", self.gateway_conf.GATEWAY_ID, self.access_token
         )
         grp_id = api_util.get_group_resource_profile_id(self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
         deployments = self.api_server_client.get_application_deployments_for_app_module_and_group_resource_profile(
-            airavata_token, application_module_id, grp_id
+            self.airavata_token, application_module_id, grp_id
         )
 
         return deployments
 
-    def get_compute_resources(self, access_token, resource_ids):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
+    def get_compute_resources(self, resource_ids):
         resources = []
         for resource_id in resource_ids:
-            resources.append(self.api_server_client.get_compute_resource(airavata_token, resource_id))
+            resources.append(self.api_server_client.get_compute_resource(self.airavata_token, resource_id))
 
         return resources
 
-    def get_group_resource_profile_id(self, access_token, group_resource_profile_name):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
-        response = self.api_server_client.get_group_resource_list(airavata_token, self.gateway_conf.GATEWAY_ID)
-        for x in response:
+    def get_group_resource_profile_id(self, group_resource_profile_name):
+        response = self.api_server_client.get_group_resource_list(self.airavata_token, self.gateway_conf.GATEWAY_ID)
+        for x in list(response):  # type: ignore
             if x.groupResourceProfileName == group_resource_profile_name:
                 return x.groupResourceProfileId
         return None
 
-    def submit_experiment(
+    def upload_files(
         self,
-        access_token,
+        host,
+        port,
+        username,
+        local_input_path,
+        base_path,
+        project_name,
+        experiment_name,
+        auth_type: Literal["token", "pkey"],
+    ):
+        if auth_type == "token":
+            sftp_connector = SFTPConnector(host=host, port=port, username=username, password=self.access_token)
+        elif auth_type == "pkey":
+            sftp_connector = SFTPConnector(host=host, port=port, username=username, pkey="/Users/yasith/.ssh/id_rsa")
+        else:
+            raise ValueError("Invalid auth_type")
+        return sftp_connector.upload_files(local_input_path, base_path, project_name, experiment_name)
+
+    def launch_experiment(
+        self,
         experiment_name,
         application_name,
         computation_resource_name,
@@ -81,23 +105,18 @@ class AiravataOperator:
         walltime=None,
         auto_schedule=False,
     ):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
-
-        api_util = APIServerClientUtil(
-            self.configuration_file_location, self.user_id, "", self.gateway_conf.GATEWAY_ID, access_token
-        )
         data_model_util = DataModelCreationUtil(
             self.configuration_file_location,
             username=self.user_id,
             password=None,
             gateway_id=self.gateway_conf.GATEWAY_ID,
-            access_token=access_token,
+            access_token=self.access_token,
         )
 
-        grp_id = api_util.get_group_resource_profile_id(self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
-        app_id = api_util.get_execution_id(application_name)
-        storage_id = api_util.get_storage_resource_id(self.experiment_conf.STORAGE_RESOURCE_HOST)
-        resource_host_id = api_util.get_resource_host_id(computation_resource_name)
+        grp_id = self.api_util.get_group_resource_profile_id(self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
+        app_id = self.api_util.get_execution_id(application_name)
+        storage_id = self.api_util.get_storage_resource_id(self.experiment_conf.STORAGE_RESOURCE_HOST)
+        resource_host_id = self.api_util.get_resource_host_id(computation_resource_name)
 
         experiment = data_model_util.get_experiment_data_model_for_single_application(
             project_name=self.experiment_conf.PROJECT_NAME,
@@ -106,15 +125,15 @@ class AiravataOperator:
             description=experiment_name,
         )
 
-        sftp_connector = SFTPConnector(
-            host=self.experiment_conf.STORAGE_RESOURCE_HOST,
-            port=self.experiment_conf.SFTP_PORT,
-            username=self.user_id,
-            password=access_token,
-        )
-
-        path_suffix = sftp_connector.upload_files(
-            local_input_path, self.experiment_conf.PROJECT_NAME, experiment.experimentName
+        path_suffix = self.upload_files(
+            self.experiment_conf.STORAGE_RESOURCE_HOST,
+            self.experiment_conf.SFTP_PORT,
+            self.user_id,
+            "",
+            local_input_path,
+            self.experiment_conf.PROJECT_NAME,
+            experiment.experimentName,
+            auth_type="token",
         )
 
         logger.info("Input files uploaded to %s", path_suffix)
@@ -198,21 +217,21 @@ class AiravataOperator:
                     experiment, input_files=data_uris, application_name=application_name
                 )
             else:
-                inputs = self.api_server_client.get_application_inputs(airavata_token, app_id)
+                inputs = self.api_server_client.get_application_inputs(self.airavata_token, app_id)
                 experiment.experimentInputs = inputs
 
-        outputs = self.api_server_client.get_application_outputs(airavata_token, app_id)
+        outputs = self.api_server_client.get_application_outputs(self.airavata_token, app_id)
 
         experiment.experimentOutputs = outputs
 
         ## Setting up command line inputs
 
-        exp_inputs = experiment.experimentInputs
+        exp_inputs: list = experiment.experimentInputs  # type: ignore
         if not exp_inputs:
             exp_inputs = []
 
-        execution_id = api_util.get_execution_id(application_name)
-        all_inputs = self.api_server_client.get_application_inputs(airavata_token, execution_id)
+        execution_id = self.api_util.get_execution_id(application_name)
+        all_inputs = self.api_server_client.get_application_inputs(self.airavata_token, execution_id)
 
         config = configparser.ConfigParser()
         config.read(local_input_path + "/inputs.ini")
@@ -220,7 +239,7 @@ class AiravataOperator:
         inputs_to_replace = []
 
         if application_name in config:
-            for input in all_inputs:
+            for input in all_inputs:  # type: ignore
                 for input_name in list(config[application_name].keys()):
                     if input.name.lower() == input_name and input.type < 3:  ## Command line input types
                         input.value = config[application_name][input_name]
@@ -228,7 +247,7 @@ class AiravataOperator:
 
         for input in inputs_to_replace:
             found = False
-            for exp_in in exp_inputs:
+            for exp_in in exp_inputs:  # type: ignore
                 if exp_in.name == input.name:
                     exp_in.value = input.value
                     found = True
@@ -239,15 +258,14 @@ class AiravataOperator:
         experiment.experimentInputs = exp_inputs
 
         # create experiment
-        ex_id = self.api_server_client.create_experiment(airavata_token, self.gateway_conf.GATEWAY_ID, experiment)
+        ex_id = self.api_server_client.create_experiment(self.airavata_token, self.gateway_conf.GATEWAY_ID, experiment)
 
         # launch experiment
-        self.api_server_client.launch_experiment(airavata_token, ex_id, self.gateway_conf.GATEWAY_ID)
+        self.api_server_client.launch_experiment(self.airavata_token, ex_id, self.gateway_conf.GATEWAY_ID)
 
         return ex_id
         # if not grp_id:
 
-    def get_experiment_status(self, access_token, experiment_id):
-        airavata_token = self.get_airavata_token(access_token, self.gateway_conf.GATEWAY_ID)
-        status = self.api_server_client.get_experiment_status(airavata_token, experiment_id)
+    def get_experiment_status(self, experiment_id):
+        status = self.api_server_client.get_experiment_status(self.airavata_token, experiment_id)
         return status

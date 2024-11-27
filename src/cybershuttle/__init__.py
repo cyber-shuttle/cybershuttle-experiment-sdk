@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from . import auth, base, md, plan
+from . import auth, base, md, plan, runtime
 
 
 def task_context(task: base.Task):
@@ -12,9 +12,6 @@ def task_context(task: base.Task):
         return result
 
     return inner
-
-
-runtime = plan.Runtime
 
 
 __all__ = ["auth", "base", "md", "plan", "runtime", "task_context"]
