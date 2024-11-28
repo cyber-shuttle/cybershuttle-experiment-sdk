@@ -1,7 +1,7 @@
 import configparser
 import logging
 import os
-from typing import Literal
+from pathlib import Path
 
 import jwt
 from airavata.model.security.ttypes import AuthzToken
@@ -17,255 +17,279 @@ logger.setLevel(logging.INFO)
 
 class AiravataOperator:
 
-    def __init__(self, configuration_file_location: str, access_token: str):
-        self.configuration_file_location = configuration_file_location
-        self.access_token = access_token
+  def __init__(self, access_token: str, config_file: str = "settings.ini"):
+    # store variables
+    self.config_file = config_file
+    self.access_token = access_token
+    # load api server settings and create client
+    self.api_server_client = APIServerClient(self.config_file)
+    # load gateway settings
+    self.gateway_conf = GatewaySettings(self.config_file)
+    gateway_id = self.gateway_conf.GATEWAY_ID
+    # load experiment settings
+    self.experiment_conf = ExperimentSettings(self.config_file)
+    self.airavata_token = self.__airavata_token__(self.access_token, gateway_id)
+    self.api_util = APIServerClientUtil(self.config_file, username=self.user_id, password="", gateway_id=gateway_id, access_token=self.access_token)
 
-        self.api_server_client = APIServerClient(self.configuration_file_location)
-        self.gateway_conf = GatewaySettings(self.configuration_file_location)
-        self.experiment_conf = ExperimentSettings(self.configuration_file_location)
+  def __airavata_token__(self, access_token, gateway_id):
+    """
+    Decode access token (string) and create AuthzToken (object)
 
-        self.airavata_token = self.__airavata_token__(self.access_token, self.gateway_conf.GATEWAY_ID)
-        self.api_util = APIServerClientUtil(
-            configuration_file_location,
-            username=self.user_id,
-            password="",
-            gateway_id=self.gateway_conf.GATEWAY_ID,
-            access_token=self.access_token,
-        )
+    """
+    decode = jwt.decode(access_token, options={"verify_signature": False})
+    self.user_id = str(decode["preferred_username"])
+    claimsMap = {"userName": self.user_id, "gatewayID": gateway_id}
+    return AuthzToken(accessToken=self.access_token, claimsMap=claimsMap)
 
-    def __airavata_token__(self, access_token, gateway_id):
-        decode = jwt.decode(access_token, options={"verify_signature": False})
-        self.user_id = decode["preferred_username"]
-        claimsMap = {"userName": self.user_id, "gatewayID": gateway_id}
+  def get_experiment(self, experiment_id: str):
+    """
+    Get experiment by id
 
-        return AuthzToken(accessToken=self.access_token, claimsMap=claimsMap)
+    """
+    return self.api_server_client.get_experiment(self.airavata_token, experiment_id)
 
-    def get_experiment(self, experiment_id):
-        return self.api_server_client.get_experiment(self.airavata_token, experiment_id)
+  def get_accessible_apps(self, gateway_id: str | None = None):
+    """
+    Get all applications available in the gateway
 
-    def get_application_list(self):
-        modules = self.api_server_client.get_all_app_modules(self.airavata_token, self.gateway_conf.GATEWAY_ID)
-        return modules
+    """
+    # use defaults for missing values
+    gateway_id = gateway_id or self.gateway_conf.GATEWAY_ID
+    # logic
+    app_interfaces = self.api_server_client.get_all_application_interfaces(self.airavata_token, gateway_id)
+    return app_interfaces
 
-    def get_compatible_deployments(self, application_module_id):
-        api_util = APIServerClientUtil(
-            self.configuration_file_location, self.user_id, "", self.gateway_conf.GATEWAY_ID, self.access_token
-        )
-        grp_id = api_util.get_group_resource_profile_id(self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
-        deployments = self.api_server_client.get_application_deployments_for_app_module_and_group_resource_profile(
-            self.airavata_token, application_module_id, grp_id
-        )
+  def get_preferred_storage(self, gateway_id: str | None = None, storage_name: str | None = None):
+    """
+    Get preferred storage resource
 
-        return deployments
+    """
+    # use defaults for missing values
+    gateway_id = gateway_id or self.gateway_conf.GATEWAY_ID
+    storage_name = storage_name or self.experiment_conf.STORAGE_RESOURCE_HOST
+    # logic
+    storage_id = self.api_util.get_storage_resource_id(storage_name)
+    return self.api_server_client.get_gateway_storage_preference(self.airavata_token, gateway_id, storage_id)
 
-    def get_compute_resources(self, resource_ids):
-        resources = []
-        for resource_id in resource_ids:
-            resources.append(self.api_server_client.get_compute_resource(self.airavata_token, resource_id))
+  def get_storage(self, storage_name: str | None = None) -> any:  # type: ignore
+    """
+    Get storage resource by name
 
-        return resources
+    """
+    # use defaults for missing values
+    storage_name = storage_name or self.experiment_conf.STORAGE_RESOURCE_HOST
+    # logic
+    storage_id = self.api_util.get_storage_resource_id(storage_name)
+    storage = self.api_util.api_server_client.get_storage_resource(self.airavata_token, storage_id)
+    return storage
 
-    def get_group_resource_profile_id(self, group_resource_profile_name):
-        response = self.api_server_client.get_group_resource_list(self.airavata_token, self.gateway_conf.GATEWAY_ID)
-        for x in list(response):  # type: ignore
-            if x.groupResourceProfileName == group_resource_profile_name:
-                return x.groupResourceProfileId
-        return None
+  def get_group_resource_profile(self, grp_name: str | None = None):
+    """
+    Get group resource profile by name
 
-    def upload_files(
-        self,
-        host,
-        port,
-        username,
-        local_input_path,
-        base_path,
-        project_name,
-        experiment_name,
-        auth_type: Literal["token", "pkey"],
-    ):
-        if auth_type == "token":
-            sftp_connector = SFTPConnector(host=host, port=port, username=username, password=self.access_token)
-        elif auth_type == "pkey":
-            sftp_connector = SFTPConnector(host=host, port=port, username=username, pkey="/Users/yasith/.ssh/id_rsa")
-        else:
-            raise ValueError("Invalid auth_type")
-        return sftp_connector.upload_files(local_input_path, base_path, project_name, experiment_name)
+    """
+    # use defaults for missing values
+    grp_name = grp_name or self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME
+    # logic
+    grp_id = self.api_util.get_group_resource_profile_id(grp_name)
+    grp = self.api_util.api_server_client.get_group_resource_profile(self.airavata_token, grp_id)
+    return grp
 
-    def launch_experiment(
-        self,
-        experiment_name,
-        application_name,
-        computation_resource_name,
-        local_input_path,
-        input_file_mapping={},
-        queue_name=None,
-        node_count=None,
-        cpu_count=None,
-        walltime=None,
-        auto_schedule=False,
-    ):
-        data_model_util = DataModelCreationUtil(
-            self.configuration_file_location,
-            username=self.user_id,
-            password=None,
-            gateway_id=self.gateway_conf.GATEWAY_ID,
-            access_token=self.access_token,
-        )
+  def get_compatible_deployments(self, app_interface_id: str, grp_name: str | None = None):
+    """
+    Get compatible deployments for an application interface and group resource profile
 
-        grp_id = self.api_util.get_group_resource_profile_id(self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
-        app_id = self.api_util.get_execution_id(application_name)
-        storage_id = self.api_util.get_storage_resource_id(self.experiment_conf.STORAGE_RESOURCE_HOST)
-        resource_host_id = self.api_util.get_resource_host_id(computation_resource_name)
+    """
+    # use defaults for missing values
+    grp_name = grp_name or self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME
+    # logic
+    grp_id = self.api_util.get_group_resource_profile_id(grp_name)
+    deployments = self.api_server_client.get_application_deployments_for_app_module_and_group_resource_profile(self.airavata_token, app_interface_id, grp_id)
+    return deployments
 
-        experiment = data_model_util.get_experiment_data_model_for_single_application(
-            project_name=self.experiment_conf.PROJECT_NAME,
-            application_name=application_name,
-            experiment_name=experiment_name,
-            description=experiment_name,
-        )
+  def get_app_interface_id(self, app_name: str, gateway_id: str | None = None):
+    """
+    Get application interface id by name
 
-        path_suffix = self.upload_files(
-            self.experiment_conf.STORAGE_RESOURCE_HOST,
-            self.experiment_conf.SFTP_PORT,
-            self.user_id,
-            "",
-            local_input_path,
-            self.experiment_conf.PROJECT_NAME,
-            experiment.experimentName,
-            auth_type="token",
-        )
+    """
+    self.api_util.gateway_id = str(gateway_id or self.gateway_conf.GATEWAY_ID)
+    return self.api_util.get_execution_id(app_name)
 
-        logger.info("Input files uploaded to %s", path_suffix)
+  def get_application_inputs(self, app_interface_id: str) -> list:
+    """
+    Get application inputs by id
 
-        path = self.gateway_conf.GATEWAY_DATA_STORE_DIR + path_suffix
+    """
+    return list(self.api_server_client.get_application_inputs(self.airavata_token, app_interface_id))  # type: ignore
 
-        queue_name = queue_name if queue_name is not None else self.experiment_conf.QUEUE_NAME
+  def get_compute_resources_by_ids(self, resource_ids: list[str]):
+    """
+    Get compute resources by ids
 
-        node_count = node_count if node_count is not None else self.experiment_conf.NODE_COUNT
+    """
+    return [self.api_server_client.get_compute_resource(self.airavata_token, resource_id) for resource_id in resource_ids]
 
-        cpu_count = cpu_count if cpu_count is not None else self.experiment_conf.TOTAL_CPU_COUNT
+  def upload_files(self, storage_resource, input_path: str, project_name: str, experiment_name: str) -> str:
+    """
+    Upload input files to storage resource, and return the remote path
 
-        walltime = walltime if walltime is not None else self.experiment_conf.WALL_TIME_LIMIT
+    Return Path: /{project_name}/{experiment_name}
 
-        logger.info("configuring inputs ......")
-        experiment = data_model_util.configure_computation_resource_scheduling(
-            experiment_model=experiment,
-            computation_resource_name=computation_resource_name,
-            group_resource_profile_name=self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME,
-            storageId=storage_id,
-            node_count=int(node_count),
-            total_cpu_count=int(cpu_count),
-            wall_time_limit=int(walltime),
-            queue_name=queue_name,
-            experiment_dir_path=path,
-            auto_schedule=auto_schedule,
-        )
+    """
+    host = storage_resource.hostName
+    port = self.experiment_conf.SFTP_PORT
+    sftp_connector = SFTPConnector(host=host, port=port, username=self.user_id, password=self.access_token)
+    upload_path = sftp_connector.upload_files(input_path, project_name, experiment_name)
+    logger.info("Input files uploaded to %s", upload_path)
+    return upload_path
 
-        input_files = []
-        if len(input_file_mapping.keys()) > 0:
-            new_file_mapping = {}
-            for key in input_file_mapping.keys():
-                if type(input_file_mapping[key]) == list:
-                    data_uris = []
-                    for x in input_file_mapping[key]:
-                        data_uri = data_model_util.register_input_file(
-                            file_identifier=x,
-                            storage_name=self.experiment_conf.STORAGE_RESOURCE_HOST,
-                            storageId=storage_id,
-                            input_file_name=x,
-                            uploaded_storage_path=path,
-                        )
-                        data_uris.append(data_uri)
-                    new_file_mapping[key] = data_uris
-                else:
-                    x = input_file_mapping[key]
-                    data_uri = data_model_util.register_input_file(
-                        file_identifier=x,
-                        storage_name=self.experiment_conf.STORAGE_RESOURCE_HOST,
-                        storageId=storage_id,
-                        input_file_name=x,
-                        uploaded_storage_path=path,
-                    )
-                    new_file_mapping[key] = data_uri
-            experiment = data_model_util.configure_input_and_outputs(
-                experiment, input_files=None, application_name=application_name, file_mapping=new_file_mapping
-            )
+  def launch_experiment(
+      self,
+      experiment_name: str,
+      app_name: str,
+      computation_resource_name: str,
+      input_path: str,
+      input_mapping: dict = {},
+      *,
+      gateway_id: str | None = None,
+      queue_name: str | None = None,
+      grp_name: str | None = None,
+      sr_host: str | None = None,
+      project_name: str | None = None,
+      node_count: int | None = None,
+      cpu_count: int | None = None,
+      walltime: int | None = None,
+      auto_schedule: bool = False,
+  ):
+    """
+    Launch an experiment
 
-            print(new_file_mapping)
-        else:
-            for x in os.listdir(local_input_path):
-                if (
-                    x == "inputs.ini"
-                ):  # Ignore command line inputs file. In future, read all input file locations from this one
-                    continue
-                if os.path.isfile(local_input_path + "/" + x):
-                    input_files.append(x)
+    """
+    # preprocess args (str)
+    gateway_id = str(gateway_id or self.gateway_conf.GATEWAY_ID)
+    queue_name = str(queue_name or self.experiment_conf.QUEUE_NAME)
+    grp_name = str(grp_name or self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
+    sr_host = str(sr_host or self.experiment_conf.STORAGE_RESOURCE_HOST)
+    project_name = str(project_name or self.experiment_conf.PROJECT_NAME)
+    mount_point = Path(self.gateway_conf.GATEWAY_DATA_STORE_DIR) / self.user_id
 
-            if len(input_files) > 0:
-                data_uris = []
-                for x in input_files:
-                    data_uri = data_model_util.register_input_file(
-                        file_identifier=x,
-                        storage_name=self.experiment_conf.STORAGE_RESOURCE_HOST,
-                        storageId=storage_id,
-                        input_file_name=x,
-                        uploaded_storage_path=path,
-                    )
-                    data_uris.append(data_uri)
-                experiment = data_model_util.configure_input_and_outputs(
-                    experiment, input_files=data_uris, application_name=application_name
-                )
-            else:
-                inputs = self.api_server_client.get_application_inputs(self.airavata_token, app_id)
-                experiment.experimentInputs = inputs
+    # preprocess args (int)
+    node_count = int(node_count or self.experiment_conf.NODE_COUNT or "1")
+    cpu_count = int(cpu_count or self.experiment_conf.TOTAL_CPU_COUNT or "1")
+    walltime = int(walltime or self.experiment_conf.WALL_TIME_LIMIT or "30")
 
-        outputs = self.api_server_client.get_application_outputs(self.airavata_token, app_id)
+    # validate args (str)
+    assert len(experiment_name) > 0
+    assert len(app_name) > 0
+    assert len(computation_resource_name) > 0
+    assert len(input_path) > 0
+    assert len(input_mapping) >= 0
+    assert len(gateway_id) > 0
+    assert len(queue_name) > 0
+    assert len(grp_name) > 0
+    assert len(sr_host) > 0
+    assert len(project_name) > 0
+    assert len(mount_point.as_posix()) > 0
 
-        experiment.experimentOutputs = outputs
+    # validate args (int)
+    assert node_count > 0
+    assert cpu_count > 0
+    assert walltime > 0
 
-        ## Setting up command line inputs
+    # upload data files (SFTP)
+    storage = self.get_storage(sr_host)
+    upload_path = self.upload_files(
+        storage_resource=storage,
+        input_path=input_path,
+        project_name=project_name,
+        experiment_name=experiment_name,
+    )
+    # upload_path remains the same across gateways, only the mount_point would change
+    abs_path = mount_point / upload_path
 
-        exp_inputs: list = experiment.experimentInputs  # type: ignore
-        if not exp_inputs:
-            exp_inputs = []
+    # setup runtime params
+    queue_name = queue_name or self.experiment_conf.QUEUE_NAME
+    node_count = int(node_count or self.experiment_conf.NODE_COUNT or "1")
+    cpu_count = int(cpu_count or self.experiment_conf.TOTAL_CPU_COUNT or "1")
+    walltime = int(walltime or self.experiment_conf.WALL_TIME_LIMIT or "01:00:00")
+    sr_id = storage.storageResourceId
 
-        execution_id = self.api_util.get_execution_id(application_name)
-        all_inputs = self.api_server_client.get_application_inputs(self.airavata_token, execution_id)
+    # setup application interface
+    app_interface_id = self.get_app_interface_id(app_name)
+    assert app_interface_id is not None
 
-        config = configparser.ConfigParser()
-        config.read(local_input_path + "/inputs.ini")
+    # create experiment
+    data_model_util = DataModelCreationUtil(
+        self.config_file,
+        username=self.user_id,
+        password=None,
+        gateway_id=gateway_id,
+        access_token=self.access_token,
+    )
+    experiment = data_model_util.get_experiment_data_model_for_single_application(
+        experiment_name=experiment_name,
+        application_name=app_name,
+        project_name=project_name,
+        description=experiment_name,
+    )
+    experiment = data_model_util.configure_computation_resource_scheduling(
+        experiment_model=experiment,
+        computation_resource_name=computation_resource_name,
+        group_resource_profile_name=grp_name,
+        storageId=sr_id,
+        node_count=node_count,
+        total_cpu_count=cpu_count,
+        wall_time_limit=walltime,
+        queue_name=queue_name,
+        experiment_dir_path=abs_path.as_posix(),
+        auto_schedule=auto_schedule,
+    )
 
-        inputs_to_replace = []
+    # setup experiment inputs
+    config = configparser.ConfigParser()
+    config.read(os.path.join(input_path, 'inputs.ini'))
 
-        if application_name in config:
-            for input in all_inputs:  # type: ignore
-                for input_name in list(config[application_name].keys()):
-                    if input.name.lower() == input_name and input.type < 3:  ## Command line input types
-                        input.value = config[application_name][input_name]
-                        inputs_to_replace.append(input)
+    def register_input(fp):
+      return data_model_util.register_input_file(fp, sr_host, sr_id, fp, abs_path.as_posix())
 
-        for input in inputs_to_replace:
-            found = False
-            for exp_in in exp_inputs:  # type: ignore
-                if exp_in.name == input.name:
-                    exp_in.value = input.value
-                    found = True
-                    continue
-            if not found:
-                exp_inputs.append(input)
+    input_files = [
+        register_input(file.as_posix()) for file in Path(input_path).iterdir()
+        if file.is_file() and file.name != 'inputs.ini'
+    ] if not input_mapping else []
 
-        experiment.experimentInputs = exp_inputs
+    file_mapping = {
+        key: [register_input(x) for x in value] if isinstance(value, list) else register_input(value)
+        for key, value in input_mapping.items()
+    } if input_mapping else {}
 
-        # create experiment
-        ex_id = self.api_server_client.create_experiment(self.airavata_token, self.gateway_conf.GATEWAY_ID, experiment)
+    print(input_files)
+    print(file_mapping)
 
-        # launch experiment
-        self.api_server_client.launch_experiment(self.airavata_token, ex_id, self.gateway_conf.GATEWAY_ID)
+    experiment = data_model_util.configure_input_and_outputs(
+        experiment_model=experiment,
+        application_name=app_name,
+        input_files=input_files,
+        file_mapping=file_mapping,
+    )
 
-        return ex_id
-        # if not grp_id:
+    if app_name in config:
+      for exp_input in experiment.experimentInputs:
+        if exp_input.type < 3:
+          exp_input.value = config[app_name].get(exp_input.name.lower(), exp_input.value)
 
-    def get_experiment_status(self, experiment_id):
-        status = self.api_server_client.get_experiment_status(self.airavata_token, experiment_id)
-        return status
+    # setup experiment outputs
+    outputs = self.api_server_client.get_application_outputs(self.airavata_token, app_interface_id)
+    experiment.experimentOutputs = outputs
+
+    # create experiment
+    ex_id = self.api_server_client.create_experiment(self.airavata_token, self.gateway_conf.GATEWAY_ID, experiment)
+
+    # launch experiment
+    self.api_server_client.launch_experiment(self.airavata_token, ex_id, self.gateway_conf.GATEWAY_ID)
+
+    return ex_id
+
+  def get_experiment_status(self, experiment_id):
+    status = self.api_server_client.get_experiment_status(
+        self.airavata_token, experiment_id)
+    return status
