@@ -16,9 +16,8 @@ class NAMD(ExperimentApp):
 
   def __init__(
       self,
-      name: str,
   ) -> None:
-    super().__init__(name, app_id="namd")
+    super().__init__(app_id="NAMD")
 
   @classmethod
   def initialize(
@@ -32,8 +31,8 @@ class NAMD(ExperimentApp):
       parallelism: Literal["CPU", "GPU"] = "CPU",
       num_replicas: int = 1,
   ) -> Experiment[ExperimentApp]:
-    app = cls(name)
-    obj = Experiment[ExperimentApp](app).with_inputs(
+    app = cls()
+    obj = Experiment[ExperimentApp](name, app).with_inputs(
         config_file=config_file,
         pdb_file=pdb_file,
         psf_file=psf_file,
@@ -73,14 +72,13 @@ class VMD(GUIApp):
 
   def __init__(
       self,
-      name: str,
   ) -> None:
-    super().__init__(name, app_id="vmd")
+    super().__init__(app_id="vmd")
 
   @classmethod
   def initialize(
       cls,
       name: str,
   ) -> GUIApp:
-    app = cls(name)
+    app = cls()
     return app

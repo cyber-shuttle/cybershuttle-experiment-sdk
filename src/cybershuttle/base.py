@@ -11,11 +11,9 @@ from .task import Task
 
 class GUIApp:
 
-  name: str
   app_id: str
 
-  def __init__(self, name: str, app_id: str) -> None:
-    self.name = name
+  def __init__(self, app_id: str) -> None:
     self.app_id = app_id
 
   def open(self, runtime: Runtime, location: str) -> None:
@@ -31,11 +29,9 @@ class GUIApp:
 
 class ExperimentApp:
 
-  name: str
   app_id: str
 
-  def __init__(self, name: str, app_id: str) -> None:
-    self.name = name
+  def __init__(self, app_id: str) -> None:
     self.app_id = app_id
 
   @classmethod
@@ -48,13 +44,15 @@ T = TypeVar("T", ExperimentApp, GUIApp)
 
 class Experiment(Generic[T], abc.ABC):
 
+  name: str
   application: T
   inputs: dict[str, Any]
   input_mapping: dict[str, str]
   resource: Runtime = Runtime.default()
   tasks: list[Task] = []
 
-  def __init__(self, application: T):
+  def __init__(self, name: str, application: T):
+    self.name = name
     self.application = application
     self.input_mapping = {}
 
@@ -79,6 +77,7 @@ class Experiment(Generic[T], abc.ABC):
     import random
     self.tasks.append(
         Task(
+            name=self.name,
             app_id=self.application.app_id,
             inputs={**self.inputs},
             input_mapping=self.input_mapping,
@@ -95,6 +94,7 @@ class Experiment(Generic[T], abc.ABC):
       task_specific_params = dict(zip(space.keys(), values))
       self.tasks.append(
           Task(
+              name=self.name,
               app_id=self.application.app_id,
               inputs={**self.inputs, **task_specific_params},
               input_mapping=self.input_mapping,
@@ -108,6 +108,7 @@ class Experiment(Generic[T], abc.ABC):
     return Plan(
         tasks=[
             Task(
+                name=t.name,
                 app_id=self.application.app_id,
                 inputs={**self.inputs, **t.inputs},
                 input_mapping=self.input_mapping,

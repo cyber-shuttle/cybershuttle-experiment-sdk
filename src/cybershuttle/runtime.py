@@ -9,13 +9,19 @@ from .auth import context
 class Runtime(abc.ABC, pydantic.BaseModel):
 
   id: str
-  args: dict[str, Any] = pydantic.Field(default={})
+  args: dict[str, str | int | float] = pydantic.Field(default={})
 
   @abc.abstractmethod
   def upload(self, file: str) -> str: ...
 
   @abc.abstractmethod
-  def execute(self, app_id: str, inputs: dict[str, Any], input_mapping: dict[str, str] = {}) -> str: ...
+  def execute(
+      self,
+      experiment_name: str,
+      app_id: str,
+      inputs: dict[str, Any],
+      input_mapping: dict[str, str] = {},
+  ) -> str: ...
 
   @abc.abstractmethod
   def status(self, ref: str) -> str: ...
@@ -65,13 +71,19 @@ class Mock(Runtime):
   def upload(self, file: str) -> str:
     return ""
 
-  def execute(self, app_id: str, inputs: dict[str, Any], input_mapping: dict[str, str | None] = {}) -> str:
+  def execute(
+      self,
+      experiment_name: str,
+      app_id: str,
+      inputs: dict[str, Any],
+      input_mapping: dict[str, str] = {},
+  ) -> str:
     import uuid
-
-    print("Copying data to compute resource: ", inputs)
-    print(f"Executing app_id={app_id} on Mock:", self.args)
+    print(f"[Mock] experiment_name={experiment_name}")
+    print(f"[Mock] copying data={inputs}")
+    print(f"[Mock] running experiment: \nname={experiment_name} \napp_id={app_id} \nargs={self.args} \ninput_mapping={input_mapping}")
     execution_id = str(uuid.uuid4())
-    print(f"Assigned exec_id={execution_id} to task")
+    print(f"[Mock] returning exec_id={execution_id}")
     return execution_id
 
   def status(self, ref: str) -> str:
@@ -108,19 +120,22 @@ class Remote(Runtime):
   def execute(
       self,
       experiment_name: str,
-      app_name: str,
+      app_id: str,
       inputs: dict[str, Any],
       input_mapping: dict[str, str] = {},
-      hpc_name: str = "login.expanse.sdsc.edu",
   ) -> str:
     assert context.access_token is not None
     from .airavata import AiravataOperator
     av = AiravataOperator(context.access_token)
 
+    print(f"[Remote] experiment_name={experiment_name}, av={av}")
+
+    assert "cluster" in self.args
+
     ex_id = av.launch_experiment(
         experiment_name=experiment_name,
-        app_name=app_name,
-        computation_resource_name=hpc_name,
+        app_name=app_id,
+        computation_resource_name=str(self.args["cluster"]),
         inputs=inputs,
         input_mapping=input_mapping,
     )
@@ -145,9 +160,11 @@ class Remote(Runtime):
 
   @staticmethod
   def default():
-    return Remote(cluster="expanse", partition="shared", profile="grprsp-1")
+    return Remote(
+        cluster="login.expanse.sdsc.edu",
+    )
 
 
 def query(**kwargs) -> list[Runtime]:
-  return [Mock.default()]
+  return [Mock.default(), Remote.default()]
   # TODO get list using token

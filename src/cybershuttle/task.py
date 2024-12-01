@@ -7,6 +7,7 @@ from .runtime import Runtime
 
 class Task(pydantic.BaseModel):
 
+  name: str
   app_id: str
   inputs: dict[str, Any]
   input_mapping: dict[str, str]
@@ -22,14 +23,15 @@ class Task(pydantic.BaseModel):
     return v
 
   def __str__(self) -> str:
-    return f"Task(app_id={self.app_id}, inputs={self.inputs}, runtime={self.runtime})"
+    return f"Task(name={self.name}, app_id={self.app_id}, inputs={self.inputs}, runtime={self.runtime})"
 
   def begin(self) -> None:
     app_id = self.app_id
     inputs = self.inputs
     input_mapping = self.input_mapping
     runtime = self.runtime
-    ref = runtime.execute(app_id, inputs, input_mapping)
+    print(f"Executing task: {self.name} on {runtime}")
+    ref = runtime.execute(self.name, app_id, inputs, input_mapping)
     self.ref = ref
 
   def status(self) -> str:
