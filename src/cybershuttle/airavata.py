@@ -1,12 +1,10 @@
-import configparser
 import logging
-import os
 from pathlib import Path
+from .sftp import SFTPConnector
 
 import jwt
 from airavata.model.security.ttypes import AuthzToken
 from airavata_sdk.clients.api_server_client import APIServerClient
-from airavata_sdk.clients.sftp_file_handling_client import SFTPConnector
 from airavata_sdk.clients.utils.api_server_client_util import APIServerClientUtil
 from airavata_sdk.clients.utils.data_model_creation_util import DataModelCreationUtil
 from airavata_sdk.transport.settings import ExperimentSettings, GatewaySettings
@@ -129,7 +127,21 @@ class AiravataOperator:
     """
     return [self.api_server_client.get_compute_resource(self.airavata_token, resource_id) for resource_id in resource_ids]
 
-  def upload_files(self, storage_resource, input_path: str, project_name: str, experiment_name: str) -> str:
+  def make_experiment_dir(self, storage_resource, project_name: str, experiment_name: str) -> str:
+    """
+    Make experiment directory on storage resource, and return the remote path
+
+    Return Path: /{project_name}/{experiment_name}
+
+    """
+    host = storage_resource.hostName
+    port = self.experiment_conf.SFTP_PORT
+    sftp_connector = SFTPConnector(host=host, port=port, username=self.user_id, password=self.access_token)
+    remote_path = sftp_connector.make_experiment_dir(project_name, experiment_name)
+    logger.info("Experiment directory created at %s", remote_path)
+    return remote_path
+
+  def upload_files(self, storage_resource, files: list[Path], exp_dir: str) -> None:
     """
     Upload input files to storage resource, and return the remote path
 
@@ -139,17 +151,16 @@ class AiravataOperator:
     host = storage_resource.hostName
     port = self.experiment_conf.SFTP_PORT
     sftp_connector = SFTPConnector(host=host, port=port, username=self.user_id, password=self.access_token)
-    upload_path = sftp_connector.upload_files(input_path, project_name, experiment_name)
-    logger.info("Input files uploaded to %s", upload_path)
-    return upload_path
+    sftp_connector.upload_files(files, exp_dir)
+    logger.info("Input files uploaded to %s", exp_dir)
 
   def launch_experiment(
       self,
       experiment_name: str,
       app_name: str,
       computation_resource_name: str,
-      input_path: str,
-      input_mapping: dict = {},
+      inputs: dict[str, str | int | float | list[str]],
+      input_mapping: dict[str, str] = {},
       *,
       gateway_id: str | None = None,
       queue_name: str | None = None,
@@ -160,9 +171,9 @@ class AiravataOperator:
       cpu_count: int | None = None,
       walltime: int | None = None,
       auto_schedule: bool = False,
-  ):
+  ) -> str:
     """
-    Launch an experiment
+    Launch an experiment and return its id
 
     """
     # preprocess args (str)
@@ -182,7 +193,7 @@ class AiravataOperator:
     assert len(experiment_name) > 0
     assert len(app_name) > 0
     assert len(computation_resource_name) > 0
-    assert len(input_path) > 0
+    assert len(inputs) > 0
     assert len(input_mapping) >= 0
     assert len(gateway_id) > 0
     assert len(queue_name) > 0
@@ -196,18 +207,8 @@ class AiravataOperator:
     assert cpu_count > 0
     assert walltime > 0
 
-    # upload data files (SFTP)
-    storage = self.get_storage(sr_host)
-    upload_path = self.upload_files(
-        storage_resource=storage,
-        input_path=input_path,
-        project_name=project_name,
-        experiment_name=experiment_name,
-    )
-    # upload_path remains the same across gateways, only the mount_point would change
-    abs_path = mount_point / upload_path
-
     # setup runtime params
+    storage = self.get_storage(sr_host)
     queue_name = queue_name or self.experiment_conf.QUEUE_NAME
     node_count = int(node_count or self.experiment_conf.NODE_COUNT or "1")
     cpu_count = int(cpu_count or self.experiment_conf.TOTAL_CPU_COUNT or "1")
@@ -218,7 +219,7 @@ class AiravataOperator:
     app_interface_id = self.get_app_interface_id(app_name)
     assert app_interface_id is not None
 
-    # create experiment
+    # setup experiment
     data_model_util = DataModelCreationUtil(
         self.config_file,
         username=self.user_id,
@@ -232,6 +233,17 @@ class AiravataOperator:
         project_name=project_name,
         description=experiment_name,
     )
+
+    # setup experiment directory
+    exp_dir = self.make_experiment_dir(
+        storage_resource=storage,
+        project_name=project_name,
+        experiment_name=experiment_name,
+    )
+    abs_path = (mount_point / exp_dir.lstrip("/")).as_posix().rstrip("/") + "/"
+    print("exp_dir:", exp_dir)
+    print("abs_path:", abs_path)
+
     experiment = data_model_util.configure_computation_resource_scheduling(
         experiment_model=experiment,
         computation_resource_name=computation_resource_name,
@@ -241,53 +253,61 @@ class AiravataOperator:
         total_cpu_count=cpu_count,
         wall_time_limit=walltime,
         queue_name=queue_name,
-        experiment_dir_path=abs_path.as_posix(),
+        experiment_dir_path=abs_path,
         auto_schedule=auto_schedule,
     )
 
+    # register input files
+    def register_input_file(file: Path) -> str:
+      return str(data_model_util.register_input_file(file.name, sr_host, sr_id, file.name, abs_path))
+
     # setup experiment inputs
-    config = configparser.ConfigParser()
-    config.read(os.path.join(input_path, 'inputs.ini'))
+    files_to_upload = list[Path]()
+    file_inputs = dict[str, str | list[str]]()
+    data_inputs = dict[str, str | list[str] | int | float]()
+    for key, value in inputs.items():
+      input_key = input_mapping.get(key, key)
 
-    def register_input(fp):
-      return data_model_util.register_input_file(fp, sr_host, sr_id, fp, abs_path.as_posix())
+      if isinstance(value, str) and Path(value).is_file():
+        file = Path(value)
+        files_to_upload.append(file)
+        file_inputs[input_key] = register_input_file(file)
 
-    input_files = [
-        register_input(file.as_posix()) for file in Path(input_path).iterdir()
-        if file.is_file() and file.name != 'inputs.ini'
-    ] if not input_mapping else []
+      elif isinstance(value, list) and all([isinstance(v, str) and Path(v).is_file() for v in value]):
+        files = [*map(Path, value)]
+        files_to_upload.extend(files)
+        file_inputs[input_key] = [*map(register_input_file, files)]
 
-    file_mapping = {
-        key: [register_input(x) for x in value] if isinstance(value, list) else register_input(value)
-        for key, value in input_mapping.items()
-    } if input_mapping else {}
+      else:
+        data_inputs[input_key] = value
 
-    print(input_files)
-    print(file_mapping)
-
+    # configure file inputs for experiment
     experiment = data_model_util.configure_input_and_outputs(
         experiment_model=experiment,
         application_name=app_name,
-        input_files=input_files,
-        file_mapping=file_mapping,
+        input_files=None,
+        file_mapping=file_inputs,
     )
 
-    if app_name in config:
-      for exp_input in experiment.experimentInputs:
-        if exp_input.type < 3:
-          exp_input.value = config[app_name].get(exp_input.name.lower(), exp_input.value)
+    self.upload_files(storage, files_to_upload, exp_dir)
 
-    # setup experiment outputs
+    # configure non-file inputs for experiment
+    for input_key, input_value in data_inputs.items():
+      for exp_input in experiment.experimentInputs:
+        if exp_input.type < 3 and exp_input.name.lower() == input_key.lower():
+          exp_input.value = input_value
+
+    # configure experiment outputs
     outputs = self.api_server_client.get_application_outputs(self.airavata_token, app_interface_id)
     experiment.experimentOutputs = outputs
 
     # create experiment
-    ex_id = self.api_server_client.create_experiment(self.airavata_token, self.gateway_conf.GATEWAY_ID, experiment)
+    ex_id = self.api_server_client.create_experiment(self.airavata_token, gateway_id, experiment)
 
     # launch experiment
-    self.api_server_client.launch_experiment(self.airavata_token, ex_id, self.gateway_conf.GATEWAY_ID)
+    self.api_server_client.launch_experiment(self.airavata_token, ex_id, gateway_id)
 
-    return ex_id
+    return str(ex_id)
 
   def get_experiment_status(self, experiment_id):
     status = self.api_server_client.get_experiment_status(

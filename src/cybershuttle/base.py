@@ -29,6 +29,20 @@ class GUIApp:
   def initialize(cls, **kwargs) -> GUIApp: ...
 
 
+class ExperimentApp:
+
+  name: str
+  app_id: str
+
+  def __init__(self, name: str, app_id: str) -> None:
+    self.name = name
+    self.app_id = app_id
+
+  @classmethod
+  @abc.abstractmethod
+  def initialize(cls, **kwargs) -> Experiment: ...
+
+
 T = TypeVar("T", ExperimentApp, GUIApp)
 
 
@@ -36,7 +50,7 @@ class Experiment(Generic[T], abc.ABC):
 
   application: T
   inputs: dict[str, Any]
-  input_mapping: dict[str, str | None]
+  input_mapping: dict[str, str]
   resource: Runtime = Runtime.default()
   tasks: list[Task] = []
 
@@ -102,17 +116,3 @@ class Experiment(Generic[T], abc.ABC):
             for t in self.tasks
         ]
     )
-
-
-class ExperimentApp:
-
-  name: str
-  app_id: str
-
-  def __init__(self, name: str, app_id: str) -> None:
-    self.name = name
-    self.app_id = app_id
-
-  @classmethod
-  @abc.abstractmethod
-  def initialize(cls, **kwargs) -> Experiment: ...

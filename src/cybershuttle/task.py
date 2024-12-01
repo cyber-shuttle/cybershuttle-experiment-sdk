@@ -9,7 +9,7 @@ class Task(pydantic.BaseModel):
 
   app_id: str
   inputs: dict[str, Any]
-  input_mapping: dict[str, str | None]
+  input_mapping: dict[str, str]
   runtime: Runtime
   ref: str | None = pydantic.Field(default=None, exclude=True)
 

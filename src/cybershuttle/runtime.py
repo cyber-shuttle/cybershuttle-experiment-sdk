@@ -15,7 +15,7 @@ class Runtime(abc.ABC, pydantic.BaseModel):
   def upload(self, file: str) -> str: ...
 
   @abc.abstractmethod
-  def execute(self, app_id: str, inputs: dict[str, Any], input_mapping: dict[str, str | None] = {}) -> str: ...
+  def execute(self, app_id: str, inputs: dict[str, Any], input_mapping: dict[str, str] = {}) -> str: ...
 
   @abc.abstractmethod
   def status(self, ref: str) -> str: ...
@@ -105,11 +105,27 @@ class Remote(Runtime):
     assert context.access_token is not None
     return ""
 
-  def execute(self, app_id: str, inputs: dict[str, Any], input_mapping: dict[str, str | None] = {}) -> str:
+  def execute(
+      self,
+      experiment_name: str,
+      app_name: str,
+      inputs: dict[str, Any],
+      input_mapping: dict[str, str] = {},
+      hpc_name: str = "login.expanse.sdsc.edu",
+  ) -> str:
     assert context.access_token is not None
     from .airavata import AiravataOperator
     av = AiravataOperator(context.access_token)
-    raise NotImplementedError()
+
+    ex_id = av.launch_experiment(
+        experiment_name=experiment_name,
+        app_name=app_name,
+        computation_resource_name=hpc_name,
+        inputs=inputs,
+        input_mapping=input_mapping,
+    )
+    print("experiment_id:", ex_id)
+    return ex_id
 
   def status(self, ref: str) -> str:
     assert context.access_token is not None
