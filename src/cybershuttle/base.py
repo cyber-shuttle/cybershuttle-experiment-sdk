@@ -75,13 +75,14 @@ class Experiment(Generic[T], abc.ABC):
     """
     # TODO random scheduling for now
     import random
+    runtime = random.choice(allowed_runtimes) if len(allowed_runtimes) > 0 else self.resource
+
     self.tasks.append(
         Task(
             name=self.name,
             app_id=self.application.app_id,
             inputs={**self.inputs},
-            input_mapping=self.input_mapping,
-            runtime=random.choice(allowed_runtimes) if len(allowed_runtimes) > 0 else self.resource,
+            runtime=runtime,
         )
     )
 
@@ -92,28 +93,21 @@ class Experiment(Generic[T], abc.ABC):
     """
     for values in product(*space.values()):
       task_specific_params = dict(zip(space.keys(), values))
-      self.tasks.append(
-          Task(
-              name=self.name,
-              app_id=self.application.app_id,
-              inputs={**self.inputs, **task_specific_params},
-              input_mapping=self.input_mapping,
-              runtime=runtime or self.resource,
-          )
-      )
+      agg_inputs = {**self.inputs, **task_specific_params}
+      task_inputs = {k: agg_inputs[v] for k, v in self.input_mapping.items()}
+      self.tasks.append(Task(
+          name=self.name,
+          app_id=self.application.app_id,
+          inputs=task_inputs,
+          runtime=runtime or self.resource,
+      ))
 
   def plan(self, **kwargs) -> Plan:
     if len(self.tasks) == 0:
       self.add_replica(self.resource)
-    return Plan(
-        tasks=[
-            Task(
-                name=t.name,
-                app_id=self.application.app_id,
-                inputs={**self.inputs, **t.inputs},
-                input_mapping=self.input_mapping,
-                runtime=t.runtime
-            )
-            for t in self.tasks
-        ]
-    )
+    tasks = []
+    for t in self.tasks:
+      agg_inputs = {**self.inputs, **t.inputs}
+      task_inputs = {k: agg_inputs[v] for k, v in self.input_mapping.items()}
+      tasks.append(Task(name=t.name, app_id=self.application.app_id, inputs=task_inputs, runtime=t.runtime))
+    return Plan(tasks=tasks)

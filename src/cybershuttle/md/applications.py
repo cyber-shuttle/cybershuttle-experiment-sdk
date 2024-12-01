@@ -43,15 +43,15 @@ class NAMD(ExperimentApp):
     )
     obj.input_mapping.update({
         "MD-Instructions-Input": "config_file",  # uri? [REQUIRED]
-        "Constraints-PDB-File": "pdb_file",  # uri? [OPTIONAL]
+        "Coordinates-PDB-File": "pdb_file",  # uri? [OPTIONAL]
         "Protein-Structure-File_PSF": "psf_file",  # uri? [REQUIRED]
         "FF-Parameter-Files": "ffp_files",  # uri[]? [REQUIRED]
         "Execution_Type": "parallelism",  # "CPU" | "GPU" [REQUIRED]
         "Optional_Inputs": "other_files",  # uri[]? [OPTIONAL]
         "Number of Replicas": "num_replicas",  # integer [REQUIRED]
+        # "Constraints-PDB": "pdb_file",  # uri? [OPTIONAL]
         # "Replicate": None,  # "yes"? [OPTIONAL]
         # "Continue_from_Previous_Run?": None,  # "yes"? [OPTIONAL]
-        # "Coordinates-PDB-File": None,  # uri? [OPTIONAL]
         # "Previous_JobID": None,  # string? [OPTIONAL] [show if "Continue_from_Previous_Run?" == "yes"]
         # "GPU Resource Warning": None,  # string? [OPTIONAL] [show if "Continue_from_Previous_Run?" == "yes"]
         # "Restart_Replicas_List": None,  # string [OPTIONAL] [show if "Continue_from_Previous_Run?" == "yes"]

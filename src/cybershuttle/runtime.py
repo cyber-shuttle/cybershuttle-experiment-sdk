@@ -20,7 +20,6 @@ class Runtime(abc.ABC, pydantic.BaseModel):
       experiment_name: str,
       app_id: str,
       inputs: dict[str, Any],
-      input_mapping: dict[str, str] = {},
   ) -> str: ...
 
   @abc.abstractmethod
@@ -76,12 +75,11 @@ class Mock(Runtime):
       experiment_name: str,
       app_id: str,
       inputs: dict[str, Any],
-      input_mapping: dict[str, str] = {},
   ) -> str:
     import uuid
     print(f"[Mock] experiment_name={experiment_name}")
     print(f"[Mock] copying data={inputs}")
-    print(f"[Mock] running experiment: \nname={experiment_name} \napp_id={app_id} \nargs={self.args} \ninput_mapping={input_mapping}")
+    print(f"[Mock] running experiment: \nname={experiment_name} \napp_id={app_id} \nargs={self.args}")
     execution_id = str(uuid.uuid4())
     print(f"[Mock] returning exec_id={execution_id}")
     return execution_id
@@ -122,7 +120,6 @@ class Remote(Runtime):
       experiment_name: str,
       app_id: str,
       inputs: dict[str, Any],
-      input_mapping: dict[str, str] = {},
   ) -> str:
     assert context.access_token is not None
     from .airavata import AiravataOperator
@@ -136,8 +133,7 @@ class Remote(Runtime):
         experiment_name=experiment_name,
         app_name=app_id,
         computation_resource_name=str(self.args["cluster"]),
-        inputs=inputs,
-        input_mapping=input_mapping,
+        inputs=inputs
     )
     print("experiment_id:", ex_id)
     return ex_id

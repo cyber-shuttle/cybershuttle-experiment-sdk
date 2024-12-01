@@ -10,7 +10,6 @@ class Task(pydantic.BaseModel):
   name: str
   app_id: str
   inputs: dict[str, Any]
-  input_mapping: dict[str, str]
   runtime: Runtime
   ref: str | None = pydantic.Field(default=None, exclude=True)
 
@@ -28,10 +27,9 @@ class Task(pydantic.BaseModel):
   def begin(self) -> None:
     app_id = self.app_id
     inputs = self.inputs
-    input_mapping = self.input_mapping
     runtime = self.runtime
     print(f"Executing task: {self.name} on {runtime}")
-    ref = runtime.execute(self.name, app_id, inputs, input_mapping)
+    ref = runtime.execute(self.name, app_id, inputs)
     self.ref = ref
 
   def status(self) -> str:

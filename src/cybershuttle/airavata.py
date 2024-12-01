@@ -160,7 +160,6 @@ class AiravataOperator:
       app_name: str,
       computation_resource_name: str,
       inputs: dict[str, str | int | float | list[str]],
-      input_mapping: dict[str, str] = {},
       *,
       gateway_id: str | None = None,
       queue_name: str | None = None,
@@ -177,6 +176,7 @@ class AiravataOperator:
 
     """
     # preprocess args (str)
+    print("[AV] Preprocessing args...")
     gateway_id = str(gateway_id or self.gateway_conf.GATEWAY_ID)
     queue_name = str(queue_name or self.experiment_conf.QUEUE_NAME)
     grp_name = str(grp_name or self.experiment_conf.GROUP_RESOURCE_PROFILE_NAME)
@@ -190,11 +190,11 @@ class AiravataOperator:
     walltime = int(walltime or self.experiment_conf.WALL_TIME_LIMIT or "30")
 
     # validate args (str)
+    print("[AV] Validating args...")
     assert len(experiment_name) > 0
     assert len(app_name) > 0
     assert len(computation_resource_name) > 0
     assert len(inputs) > 0
-    assert len(input_mapping) >= 0
     assert len(gateway_id) > 0
     assert len(queue_name) > 0
     assert len(grp_name) > 0
@@ -208,6 +208,7 @@ class AiravataOperator:
     assert walltime > 0
 
     # setup runtime params
+    print("[AV] Setting up runtime params...")
     storage = self.get_storage(sr_host)
     queue_name = queue_name or self.experiment_conf.QUEUE_NAME
     node_count = int(node_count or self.experiment_conf.NODE_COUNT or "1")
@@ -216,10 +217,12 @@ class AiravataOperator:
     sr_id = storage.storageResourceId
 
     # setup application interface
+    print("[AV] Setting up application interface...")
     app_interface_id = self.get_app_interface_id(app_name)
     assert app_interface_id is not None
 
     # setup experiment
+    print("[AV] Setting up experiment...")
     data_model_util = DataModelCreationUtil(
         self.config_file,
         username=self.user_id,
@@ -235,14 +238,15 @@ class AiravataOperator:
     )
 
     # setup experiment directory
+    print("[AV] Setting up experiment directory...")
     exp_dir = self.make_experiment_dir(
         storage_resource=storage,
         project_name=project_name,
         experiment_name=experiment_name,
     )
     abs_path = (mount_point / exp_dir.lstrip("/")).as_posix().rstrip("/") + "/"
-    print("exp_dir:", exp_dir)
-    print("abs_path:", abs_path)
+    print("[AV] exp_dir:", exp_dir)
+    print("[AV] abs_path:", abs_path)
 
     experiment = data_model_util.configure_computation_resource_scheduling(
         experiment_model=experiment,
@@ -257,7 +261,9 @@ class AiravataOperator:
         auto_schedule=auto_schedule,
     )
 
-    # register input files
+    # set up file inputs
+    print("[AV] Setting up file inputs...")
+
     def register_input_file(file: Path) -> str:
       return str(data_model_util.register_input_file(file.name, sr_host, sr_id, file.name, abs_path))
 
@@ -266,40 +272,44 @@ class AiravataOperator:
     file_inputs = dict[str, str | list[str]]()
     data_inputs = dict[str, str | list[str] | int | float]()
     for key, value in inputs.items():
-      input_key = input_mapping.get(key, key)
 
       if isinstance(value, str) and Path(value).is_file():
         file = Path(value)
         files_to_upload.append(file)
-        file_inputs[input_key] = register_input_file(file)
+        file_inputs[key] = register_input_file(file)
 
       elif isinstance(value, list) and all([isinstance(v, str) and Path(v).is_file() for v in value]):
         files = [*map(Path, value)]
         files_to_upload.extend(files)
-        file_inputs[input_key] = [*map(register_input_file, files)]
+        file_inputs[key] = [*map(register_input_file, files)]
 
       else:
-        data_inputs[input_key] = value
+        data_inputs[key] = value
 
     # configure file inputs for experiment
-    experiment = data_model_util.configure_input_and_outputs(
-        experiment_model=experiment,
-        application_name=app_name,
-        input_files=None,
-        file_mapping=file_inputs,
-    )
-
+    print("[AV] Uploading file inputs for experiment...")
     self.upload_files(storage, files_to_upload, exp_dir)
 
-    # configure non-file inputs for experiment
-    for input_key, input_value in data_inputs.items():
-      for exp_input in experiment.experimentInputs:
-        if exp_input.type < 3 and exp_input.name.lower() == input_key.lower():
-          exp_input.value = input_value
+    # configure experiment inputs
+    experiment_inputs = []
+    for exp_input in self.api_server_client.get_application_inputs(self.airavata_token, app_interface_id):  # type: ignore
+      if exp_input.type < 3 and exp_input.name in data_inputs:
+        value = data_inputs[exp_input.name]
+        if exp_input.type == 1:
+          continue  # ints cause errors (num_replicas)
+        exp_input.value = value
+      elif exp_input.type == 3 and exp_input.name in file_inputs:
+        exp_input.value = file_inputs[exp_input.name]
+      elif exp_input.type == 4 and exp_input.name in file_inputs:
+        exp_input.value = ','.join(file_inputs[exp_input.name])
+      experiment_inputs.append(exp_input)
+    experiment.experimentInputs = experiment_inputs
+    print(f"experiment_inputs=", experiment.experimentInputs)
 
     # configure experiment outputs
     outputs = self.api_server_client.get_application_outputs(self.airavata_token, app_interface_id)
     experiment.experimentOutputs = outputs
+    print(f"experiment_outputs=", experiment.experimentOutputs)
 
     # create experiment
     ex_id = self.api_server_client.create_experiment(self.airavata_token, gateway_id, experiment)
