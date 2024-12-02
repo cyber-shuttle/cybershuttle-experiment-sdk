@@ -57,7 +57,7 @@ plan = cs.plan.Plan.load_json("plan.json")  # this will load the plan from a fil
 plan.describe()  # this will describe the plan
 
 # [executing plans]
-plan.run()  # this will execute the plan (will ask for user confirmation)
+plan.launch()  # this will execute the plan (will ask for user confirmation)
 
 # at this point, the plan will be sent to the runtimes for execution
 # the runtimes will check if they can handle it, and throw an error if they cannot.

@@ -3,6 +3,8 @@ from __future__ import annotations
 import abc
 from itertools import product
 from typing import Any, Generic, TypeVar
+import uuid
+import random
 
 from .plan import Plan
 from .runtime import Runtime
@@ -73,30 +75,33 @@ class Experiment(Generic[T], abc.ABC):
     This will create a copy of the application with the given inputs.
 
     """
-    # TODO random scheduling for now
-    import random
     runtime = random.choice(allowed_runtimes) if len(allowed_runtimes) > 0 else self.resource
+    uuid_str = str(uuid.uuid4())[:4].upper()
 
     self.tasks.append(
         Task(
-            name=self.name,
+            name=f"{self.name}_{uuid_str}",
             app_id=self.application.app_id,
             inputs={**self.inputs},
             runtime=runtime,
         )
     )
 
-  def add_sweep(self, runtime: Runtime | None = None, **space: list[Any]) -> None:
+  def add_sweep(self, *allowed_runtimes: Runtime, **space: list) -> None:
     """
     Add a sweep to the experiment.
 
     """
-    for values in product(*space.values()):
+    for values in product(space.values()):
+      runtime = random.choice(allowed_runtimes) if len(allowed_runtimes) > 0 else self.resource
+      uuid_str = str(uuid.uuid4())[:4].upper()
+
       task_specific_params = dict(zip(space.keys(), values))
       agg_inputs = {**self.inputs, **task_specific_params}
       task_inputs = {k: agg_inputs[v] for k, v in self.input_mapping.items()}
+
       self.tasks.append(Task(
-          name=self.name,
+          name=f"{self.name}_{uuid_str}",
           app_id=self.application.app_id,
           inputs=task_inputs,
           runtime=runtime or self.resource,

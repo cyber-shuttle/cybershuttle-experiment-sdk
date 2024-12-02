@@ -125,7 +125,7 @@ class Remote(Runtime):
     from .airavata import AiravataOperator
     av = AiravataOperator(context.access_token)
 
-    print(f"[Remote] experiment_name={experiment_name}, av={av}")
+    print(f"[Remote] Experiment Created: name={experiment_name}")
 
     assert "cluster" in self.args
 
@@ -135,7 +135,7 @@ class Remote(Runtime):
         computation_resource_name=str(self.args["cluster"]),
         inputs=inputs
     )
-    print("experiment_id:", ex_id)
+    print(f"[Remote] Experiment Launched: id={ex_id}")
     return ex_id
 
   def status(self, ref: str):

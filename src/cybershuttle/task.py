@@ -11,7 +11,8 @@ class Task(pydantic.BaseModel):
   app_id: str
   inputs: dict[str, Any]
   runtime: Runtime
-  ref: str | None = pydantic.Field(default=None, exclude=True)
+  ref: str | None = pydantic.Field(default=None)
+  agent_ref: str | None = pydantic.Field(default=None)
 
   @pydantic.field_validator("runtime", mode="before")
   def set_runtime(cls, v):
@@ -24,13 +25,15 @@ class Task(pydantic.BaseModel):
   def __str__(self) -> str:
     return f"Task(name={self.name}, app_id={self.app_id}, inputs={self.inputs}, runtime={self.runtime})"
 
-  def begin(self) -> None:
-    app_id = self.app_id
-    inputs = self.inputs
-    runtime = self.runtime
-    print(f"Executing task: {self.name} on {runtime}")
-    ref = runtime.execute(self.name, app_id, inputs)
-    self.ref = ref
+  def launch(self) -> None:
+    assert self.ref is None
+    print(f"[Task] Executing {self.name} on {self.runtime}")
+    self.ref = self.runtime.execute(self.name, self.app_id, self.inputs)
+
+  def launch_agent(self) -> None:
+    assert self.ref is not None
+    print(f"[Task] Executing {self.name}_agent on {self.runtime}")
+    self.agent_ref = self.runtime.execute(f"{self.name}_agent", "AiravataAgent", {})
 
   def status(self) -> str:
     assert self.ref is not None

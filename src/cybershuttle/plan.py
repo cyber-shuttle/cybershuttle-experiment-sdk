@@ -39,10 +39,15 @@ class Plan(pydantic.BaseModel):
         else:
           continue
 
-  def __stage_begin__(self) -> None:
-    print("Starting tasks...")
+  def __stage_launch_task__(self) -> None:
+    print("Launching tasks...")
     for task in self.tasks:
-      task.begin()
+      task.launch()
+
+  def __stage_launch_agent__(self) -> None:
+    print("Launching agents...")
+    for task in self.tasks:
+      task.launch_agent()
 
   def __stage_status__(self) -> list:
     statuses = []
@@ -71,11 +76,17 @@ class Plan(pydantic.BaseModel):
     print("Results fetched.")
     return fps
 
-  def run(self, silent: bool = False) -> None:
+  def launch(self, silent: bool = False) -> None:
     try:
       self.__stage_prepare__()
       self.__stage_confirm__(silent)
-      self.__stage_begin__()
+      self.__stage_launch_task__()
+    except Exception as e:
+      print(*e.args, sep="\n")
+
+  def launch_agents(self) -> None:
+    try:
+      self.__stage_launch_agent__()
     except Exception as e:
       print(*e.args, sep="\n")
 
@@ -84,15 +95,15 @@ class Plan(pydantic.BaseModel):
     states = ["CREATED", "VALIDATED", "SCHEDULED", "LAUNCHED", "EXECUTING", "CANCELING", "CANCELED", "COMPLETED", "FAILED"]
     def is_terminal_state(x): return x in ["CANCELED", "COMPLETED", "FAILED"]
     with Progress() as progress:
-      pbars = [progress.add_task(f"Task {i+1}/{n}", total=None) for i in range(n)]
+      pbars = [progress.add_task(f"{task.name} ({i+1}/{n})", total=None) for i, task in enumerate(self.tasks)]
       completed = [False] * n
       while not all(completed):
         statuses = self.__stage_status__()
-        for i, status in enumerate(statuses):
+        for i, (task, status) in enumerate(zip(self.tasks, statuses)):
           state = status.state
           state_text = states[state]
           pbar = pbars[i]
-          progress.update(pbar, description=f"Task {i+1}/{n}: {state_text}")
+          progress.update(pbar, description=f"{task.name} ({i+1}/{n}): {state_text}")
           if is_terminal_state(state_text):
             completed[i] = True
             progress.update(pbar, completed=True)
@@ -105,7 +116,7 @@ class Plan(pydantic.BaseModel):
 
   def save_json(self, filename: str) -> None:
     with open(filename, "w") as f:
-      json.dump(self.model_dump(), f)
+      json.dump(self.model_dump(), f, indent=2)
 
   @staticmethod
   def load_json(filename: str) -> Plan:

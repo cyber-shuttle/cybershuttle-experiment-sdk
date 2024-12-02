@@ -304,12 +304,10 @@ class AiravataOperator:
         exp_input.value = ','.join(file_inputs[exp_input.name])
       experiment_inputs.append(exp_input)
     experiment.experimentInputs = experiment_inputs
-    print(f"experiment_inputs=", experiment.experimentInputs)
 
     # configure experiment outputs
     outputs = self.api_server_client.get_application_outputs(self.airavata_token, app_interface_id)
     experiment.experimentOutputs = outputs
-    print(f"experiment_outputs=", experiment.experimentOutputs)
 
     # create experiment
     ex_id = self.api_server_client.create_experiment(self.airavata_token, gateway_id, experiment)
