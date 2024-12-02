@@ -17,7 +17,7 @@
 import logging
 from pathlib import Path
 from datetime import datetime
-from tqdm import tqdm
+from rich.progress import Progress
 
 import paramiko
 from paramiko import SFTPClient, Transport
@@ -57,17 +57,19 @@ class SFTPConnector(object):
     else:
       transport.connect(username=self.username, password=self.password)
     try:
-      iter = tqdm(localpaths)
-      for file in iter:
-        connection = SFTPClient.from_transport(transport)
-        assert connection is not None
-        try:
-          connection.lstat(remote_path)  # Test if remote_path exists
-        except IOError:
-          connection.mkdir(remote_path)
-        iter.set_postfix_str(f"📁 {file}")
-        remote_fpath = remote_path + "/" + file.name
-        connection.put(file, remote_fpath)
+      with Progress() as progress:
+        task = progress.add_task("Uploading...", total=len(localpaths)-1)
+        for file in localpaths:
+          connection = SFTPClient.from_transport(transport)
+          assert connection is not None
+          try:
+            connection.lstat(remote_path)  # Test if remote_path exists
+          except IOError:
+            connection.mkdir(remote_path)
+          remote_fpath = remote_path + "/" + file.name
+          connection.put(file, remote_fpath)
+          progress.update(task, advance=1, description=f"Uploading: {file.name}")
+        progress.update(task, completed=True)
     finally:
       transport.close()
     return remote_path

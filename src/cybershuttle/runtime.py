@@ -138,14 +138,13 @@ class Remote(Runtime):
     print("experiment_id:", ex_id)
     return ex_id
 
-  def status(self, ref: str) -> str:
+  def status(self, ref: str):
     assert context.access_token is not None
     from .airavata import AiravataOperator
     av = AiravataOperator(context.access_token)
 
     status = av.get_experiment_status(ref)
-    print("status={status}")
-    return status # type: ignore
+    return status
 
   def signal(self, ref: str, signal: str) -> None:
     assert context.access_token is not None
