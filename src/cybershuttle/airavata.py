@@ -312,6 +312,10 @@ class AiravataOperator:
     # create experiment
     ex_id = self.api_server_client.create_experiment(self.airavata_token, gateway_id, experiment)
 
+    # TODO agent_id generate and send as input parameter
+    # connect to connection service after this point, and route all file-related requests through it
+    # later build a ssh adapter for ls type tasks
+
     # launch experiment
     self.api_server_client.launch_experiment(self.airavata_token, ex_id, gateway_id)
 
