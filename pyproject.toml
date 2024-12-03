@@ -9,7 +9,7 @@ description  = "A SDK for Cybershuttle experiments"
 authors      = [{ name = "Your Name", email = "your.email@example.com" }]
 readme       = "README.md"
 license      = { file = "LICENSE" }
-dependencies = ["requests", "pydantic", "rich"]
+dependencies = ["requests", "pydantic", "rich", "paramiko"]
 
 [tool.isort]
 profile                = "autopep8"
