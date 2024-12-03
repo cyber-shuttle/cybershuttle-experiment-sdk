@@ -3,13 +3,32 @@ requires      = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name         = "cybershuttle-experiment-sdk"
+name         = "airavata-experiment-sdk"
 version      = "0.1.0"
-description  = "A SDK for Cybershuttle experiments"
+description  = "A SDK for airavata experiments"
 authors      = [{ name = "Your Name", email = "your.email@example.com" }]
 readme       = "README.md"
 license      = { file = "LICENSE" }
-dependencies = ["requests", "pydantic", "rich", "paramiko", "scp"]
+dependencies = [
+  "requests",
+  "pydantic",
+  "rich",
+  "paramiko",
+  "scp",
+  "airavata-python-sdk",
+  # ---- requirements of airavata-python-sdk ----
+  "oauthlib",
+  "requests",
+  "requests-oauthlib",
+  "thrift~=0.16.0",
+  "thrift_connector",
+  "paramiko",
+  "scp",
+  "pysftp",
+  "configparser",
+  "urllib3",
+  "pyjwt"
+]
 
 [tool.isort]
 profile                = "autopep8"
