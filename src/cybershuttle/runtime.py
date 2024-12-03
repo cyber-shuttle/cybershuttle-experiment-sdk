@@ -14,12 +14,19 @@
 #  limitations under the License.
 #
 
+from .auth import context
 import abc
 from typing import Any
 
 import pydantic
+import requests
+import uuid
+import time
 
-from .auth import context
+Task = Any
+
+
+conn_svc_url = "api.gateway.cybershuttle.org"
 
 
 class Runtime(abc.ABC, pydantic.BaseModel):
@@ -28,27 +35,19 @@ class Runtime(abc.ABC, pydantic.BaseModel):
   args: dict[str, str | int | float] = pydantic.Field(default={})
 
   @abc.abstractmethod
-  def upload(self, file: str) -> str: ...
+  def execute(self, task: Task) -> None: ...
 
   @abc.abstractmethod
-  def execute(
-      self,
-      experiment_name: str,
-      app_id: str,
-      inputs: dict[str, Any],
-  ) -> str: ...
+  def status(self, task: Task) -> str: ...
 
   @abc.abstractmethod
-  def status(self, ref: str) -> str: ...
+  def signal(self, signal: str, task: Task) -> None: ...
 
   @abc.abstractmethod
-  def signal(self, ref: str, signal: str) -> None: ...
+  def ls(self, task: Task) -> list[str]: ...
 
   @abc.abstractmethod
-  def ls(self, ref: str) -> list[str]: ...
-
-  @abc.abstractmethod
-  def download(self, ref: str, file: str) -> str: ...
+  def download(self, file: str, task: Task) -> str: ...
 
   def __str__(self) -> str:
     return f"{self.__class__.__name__}(args={self.args})"
@@ -83,24 +82,12 @@ class Mock(Runtime):
   def __init__(self) -> None:
     super(Runtime, self).__init__(id="mock")
 
-  def upload(self, file: str) -> str:
-    return ""
-
-  def execute(
-      self,
-      experiment_name: str,
-      app_id: str,
-      inputs: dict[str, Any],
-  ) -> str:
+  def execute(self, task: Task) -> None:
     import uuid
-    print(f"[Mock] experiment_name={experiment_name}")
-    print(f"[Mock] copying data={inputs}")
-    print(f"[Mock] running experiment: \nname={experiment_name} \napp_id={app_id} \nargs={self.args}")
-    execution_id = str(uuid.uuid4())
-    print(f"[Mock] returning exec_id={execution_id}")
-    return execution_id
+    task.agent_ref = str(uuid.uuid4())
+    task.ref = str(uuid.uuid4())
 
-  def status(self, ref: str) -> str:
+  def status(self, task: Task) -> str:
     import random
 
     self._state += random.randint(0, 5)
@@ -108,13 +95,13 @@ class Mock(Runtime):
       return "COMPLETED"
     return "RUNNING"
 
-  def signal(self, ref: str, signal: str) -> None:
+  def signal(self, signal: str, task: Task) -> None:
     pass
 
-  def ls(self, ref: str) -> list[str]:
+  def ls(self, task: Task) -> list[str]:
     return []
 
-  def download(self, ref: str, file: str) -> str:
+  def download(self, file: str, task: Task) -> str:
     return ""
 
   @staticmethod
@@ -127,51 +114,71 @@ class Remote(Runtime):
   def __init__(self, **kwargs) -> None:
     super(Runtime, self).__init__(id="remote", args=kwargs)
 
-  def upload(self, file: str) -> str:
+  def execute(self, task: Task) -> None:
     assert context.access_token is not None
-    return ""
+    assert task.ref is None
+    assert task.agent_ref is None
 
-  def execute(
-      self,
-      experiment_name: str,
-      app_id: str,
-      inputs: dict[str, Any],
-  ) -> str:
-    assert context.access_token is not None
     from .airavata import AiravataOperator
     av = AiravataOperator(context.access_token)
-
-    print(f"[Remote] Experiment Created: name={experiment_name}")
-
+    print(f"[Remote] Experiment Created: name={task.name}")
     assert "cluster" in self.args
-
-    ex_id = av.launch_experiment(
-        experiment_name=experiment_name,
-        app_name=app_id,
+    task.agent_ref = str(uuid.uuid4())
+    task.ref = av.launch_experiment(
+        experiment_name=task.name,
+        app_name=task.app_id,
         computation_resource_name=str(self.args["cluster"]),
-        inputs=inputs
+        inputs={**task.inputs, "agent_id": task.agent_ref, "server_url": conn_svc_url}
     )
-    print(f"[Remote] Experiment Launched: id={ex_id}")
-    return ex_id
+    print(f"[Remote] Experiment Launched: id={task.ref}")
 
-  def status(self, ref: str):
+  def status(self, task: Task):
     assert context.access_token is not None
+    assert task.ref is not None
+    assert task.agent_ref is not None
+
     from .airavata import AiravataOperator
     av = AiravataOperator(context.access_token)
-
-    status = av.get_experiment_status(ref)
+    status = av.get_experiment_status(task.ref)
     return status
 
-  def signal(self, ref: str, signal: str) -> None:
+  def signal(self, signal: str, task: Task) -> None:
     assert context.access_token is not None
+    assert task.ref is not None
+    assert task.agent_ref is not None
+
+    # raise NotImplementedError(signal, task)
     pass
 
-  def ls(self, ref: str) -> list[str]:
+  def ls(self, task: Task) -> list[str]:
     assert context.access_token is not None
-    return []
+    assert task.ref is not None
+    assert task.agent_ref is not None
 
-  def download(self, ref: str, file: str) -> str:
+    res = requests.post(f"https://{conn_svc_url}/api/v1/agent/executecommandrequest", json={
+        "agentId": task.agent_ref,
+        "workingDir": ".",
+        "arguments": ["ls"]
+    })
+    data = res.json()
+    if data["error"] is not None:
+      return []
+    else:
+      exc_id = data["executionId"]
+      while True:
+        res = requests.get(f"https://{conn_svc_url}/api/v1/agent/executecommandresponse/{exc_id}")
+        print(data)
+        if data["available"]:
+          files = data["responseString"].split("\n")
+          return files
+        time.sleep(1)
+
+  def download(self, file: str, task: Task) -> str:
     assert context.access_token is not None
+    assert task.ref is not None
+    assert task.agent_ref is not None
+
+    # raise NotImplementedError(file, task)
     return ""
 
   @staticmethod

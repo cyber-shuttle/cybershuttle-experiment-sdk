@@ -17,10 +17,8 @@
 from typing import Any
 
 import pydantic
-import uuid
 
 from .runtime import Runtime
-
 
 class Task(pydantic.BaseModel):
 
@@ -45,21 +43,16 @@ class Task(pydantic.BaseModel):
   def launch(self) -> None:
     assert self.ref is None
     print(f"[Task] Executing {self.name} on {self.runtime}")
-    self.agent_ref = str(uuid.uuid4())
-    self.ref = self.runtime.execute(self.name, self.app_id, {
-      **self.inputs,
-      "agent_id": self.agent_ref,
-      "server_url": "api.gateway.cybershuttle.org"
-    })
+    self.runtime.execute(self)
 
   def status(self) -> str:
     assert self.ref is not None
-    return self.runtime.status(self.ref)
+    return self.runtime.status(self)
 
   def files(self) -> list[str]:
     assert self.ref is not None
-    return self.runtime.ls(self.ref)
+    return self.runtime.ls(self)
 
   def stop(self) -> None:
     assert self.ref is not None
-    return self.runtime.signal(self.ref, "SIGTERM")
+    return self.runtime.signal("SIGTERM", self)
