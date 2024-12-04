@@ -10,12 +10,7 @@ authors      = [{ name = "Your Name", email = "your.email@example.com" }]
 readme       = "README.md"
 license      = { file = "LICENSE" }
 dependencies = [
-  "requests",
-  "pydantic",
-  "rich",
-  "paramiko",
-  "scp",
-  "git+https://github.com/yasithdev/airavata.git@experiment-sdk#subdirectory=airavata-api/airavata-client-sdks/airavata-python-sdk",
+  "git+https://github.com/yasithdev/airavata.git@experiment-sdk#subdirectory=airavata-api/airavata-client-sdks/airavata-experiment-sdk",
 ]
 
 [tool.isort]
